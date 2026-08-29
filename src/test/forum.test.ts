@@ -311,3 +311,56 @@ test("distribute is a no-op when this pod is not the leader", async () => {
   assert.strictEqual(called, false);
   assert.ok(!calls.some((url) => url.includes("/bully/message")));
 });
+
+test("distributeAndCollect gathers responses that arrive within the timeout window", async () => {
+  const { bully, forum } = makeNode(
+    { name: "c", host: "10.0.0.3" },
+    [
+      { name: "a", host: "10.0.0.1" },
+      { name: "b", host: "10.0.0.2" },
+    ],
+    fakeFetch(async () => ({ ok: true })),
+  );
+
+  await bully.startElection();
+  assert.strictEqual(bully.getStatus().isLeader, true);
+
+  const collecting = forum.distributeAndCollect<null, string>("start-job", () => null, "job-result", 100);
+
+  // Simulate peer "a" and self ("c") responding while the collection window is open — peer "b"
+  // never responds, and should simply be absent from the result rather than causing a failure.
+  bully.channel.emit("job-result", { peer: "a", response: "done-a" });
+  bully.channel.emit("job-result", { peer: "c", response: "done-c" });
+
+  const results = await collecting;
+
+  assert.strictEqual(results.size, 2);
+  assert.strictEqual(results.get("a"), "done-a");
+  assert.strictEqual(results.get("c"), "done-c");
+  assert.strictEqual(results.get("b"), undefined);
+});
+
+test("distributeAndCollect returns an empty map when this pod is not the leader", async () => {
+  const { forum } = makeNode(
+    { name: "a", host: "10.0.0.1" },
+    [{ name: "b", host: "10.0.0.2" }],
+    fakeFetch(async () => ({ ok: true })),
+  );
+
+  const results = await forum.distributeAndCollect("start-job", () => null, "job-result", 50);
+
+  assert.strictEqual(results.size, 0);
+});
+
+test("distributeAndCollect stops listening once the timeout window closes", async () => {
+  const { bully, forum } = makeNode(
+    { name: "a", host: "10.0.0.1" },
+    [],
+    fakeFetch(async () => ({ ok: true })),
+  );
+  await bully.startElection();
+
+  await forum.distributeAndCollect("start-job", () => null, "job-result", 30);
+
+  assert.strictEqual(bully.channel.listenerCount("job-result"), 0);
+});

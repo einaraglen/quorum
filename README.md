@@ -41,7 +41,9 @@ Four messaging patterns are available, each with a different routing model:
 
 All four deliver to the pod's local `channel` EventEmitter when the target happens to be self, with no network round-trip.
 
-`distribute(event, resolvePayload)` is a leader-only helper for partitioning work: it calls your callback once per peer (sorted by name for stability) and delivers the return value to each pod as a `channel` event. Useful for sending each pod its own slice of a large dataset without the leader needing to know each pod's address explicitly.
+`distribute(event, resolvePayload)` is a leader-only helper for partitioning work: it calls your callback once per peer (sorted by name for stability) and delivers the return value to each pod as a `channel` event. Useful for sending each pod its own slice of a large dataset without the leader needing to know each pod's address explicitly. It's fire-and-forget — it doesn't wait for peers to acknowledge or finish, and a peer that's briefly unreachable just silently misses its share.
+
+`distributeAndCollect(event, resolvePayload, responseEvent, responseTimeoutMs?)` is the same idea, but waits up to `responseTimeoutMs` (default `2000`) for peers to answer back on `responseEvent` and resolves with a `Map<peerName, response>`. A peer that never responds is simply absent from the map — this never rejects on a missing or slow peer. Each peer answers by calling `forum.send(responseEvent, { peer: self, response })`, since responses aren't automatically tagged with who sent them.
 
 `subscribeToPeer(peer, event, onData)` opens a live SSE connection to a named peer and delivers every event it emits under that name. Returns an unsubscribe function. Targets itself locally — no loopback HTTP connection.
 

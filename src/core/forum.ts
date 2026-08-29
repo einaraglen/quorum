@@ -10,6 +10,12 @@ export type ForumOptions = {
   logger?: Logger;
 };
 
+/**
+ * The shape a peer must respond with for distributeAndCollect() to attribute its answer —
+ * responses aren't automatically tagged with who sent them, so the sender embeds its own name.
+ */
+export type DistributeResponse<R> = { peer: string; response: R };
+
 export class Forum {
   private readonly bully: Bully;
   private readonly transport: Transport;
@@ -111,6 +117,40 @@ export class Forum {
         return this.transport.postToPeer(peer.host!, "/bully/message", { event, payload });
       }),
     );
+  }
+
+  /**
+   * Leader-only: like distribute(), but waits up to `responseTimeoutMs` for each peer to answer
+   * back on `responseEvent` and returns whatever came in. A peer that never responds is simply
+   * absent from the map — this never rejects or throws on a missing/slow peer.
+   *
+   * Each peer must respond with:
+   * `forum.send(responseEvent, { peer: self, response } satisfies DistributeResponse<R>)`
+   * since responses aren't automatically tagged with who sent them (the same convention
+   * ShardManager's own holdings-report collection uses internally).
+   */
+  public async distributeAndCollect<T, R>(
+    event: string,
+    resolvePayload: (peer: BullyPeer, index: number, allPeers: BullyPeer[]) => T,
+    responseEvent: string,
+    responseTimeoutMs = 2000,
+  ): Promise<Map<string, R>> {
+    if (!this.bully.isLeader()) {
+      this.logger.warn(`distributeAndCollect('${event}') called while not leader, ignoring`);
+      return new Map();
+    }
+
+    const responses = new Map<string, R>();
+    const collector = (payload: DistributeResponse<R>) => {
+      responses.set(payload.peer, payload.response);
+    };
+
+    this.bully.channel.on(responseEvent, collector);
+    await this.distribute(event, resolvePayload);
+    await new Promise((resolve) => setTimeout(resolve, responseTimeoutMs));
+    this.bully.channel.off(responseEvent, collector);
+
+    return responses;
   }
 
   /**

@@ -5,7 +5,7 @@ export { Bully } from "./core/bully";
 export type { BullyPeer, BullyCluster, Discovery, BullyOptions } from "./core/bully";
 
 export { Forum } from "./core/forum";
-export type { ForumOptions } from "./core/forum";
+export type { ForumOptions, DistributeResponse } from "./core/forum";
 
 export { Transport } from "./core/transport";
 export type { TransportOptions, TransportCallbacks } from "./core/transport";
