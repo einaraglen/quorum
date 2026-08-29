@@ -36,7 +36,6 @@
     "check": "npm run format:check && npm run lint"
   },
   "devDependencies": {
-    "@types/express": "^5.0.6",
     "@types/node": "^24.9.2",
     "oxlint": "^1.80.0",
     "prettier": "^3.9.6",
@@ -44,6 +43,6 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "express": "^5.2.1"
+    "@tinyhttp/app": "^3.0.11"
   }
 }

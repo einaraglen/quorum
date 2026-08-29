@@ -1,6 +1,5 @@
 import { EventEmitter } from "events";
-import type { Server } from "http";
-import express, { NextFunction, Request, Response } from "express";
+import { App } from "@tinyhttp/app";
 import type { Logger } from "./logger";
 
 export type TransportOptions = {
@@ -18,13 +17,19 @@ export type TransportCallbacks = {
   channel: EventEmitter;
 };
 
+const readJsonBody = async (req: AsyncIterable<Buffer>): Promise<any> => {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(chunk);
+  return chunks.length === 0 ? {} : JSON.parse(Buffer.concat(chunks).toString("utf8"));
+};
+
 export class Transport {
   public readonly fetchFn: typeof fetch;
   public readonly port: number;
   private readonly internalHost?: string;
   private readonly requestTimeoutMs: number;
   private readonly logger: Logger;
-  private server?: Server;
+  private server?: ReturnType<App["listen"]>;
 
   constructor(opts: TransportOptions = {}) {
     this.fetchFn = opts.fetchFn ?? fetch;
@@ -60,27 +65,34 @@ export class Transport {
   }
 
   public start(cb: TransportCallbacks): void {
-    const app = express();
-    app.use(express.json());
+    const app = new App();
 
-    app.get("/health", (_, res) => {
+    const onJsonMessage = (handle: (body: any) => void) => async (req: any, res: any) => {
+      try {
+        handle(await readJsonBody(req));
+        res.sendStatus(200);
+      } catch (err: any) {
+        this.logger.error(err);
+        res.status(500).json({ status: "ERROR", error: err?.message ?? String(err) });
+      }
+    };
+
+    app.get("/health", (_req, res) => {
       res.json({ status: "OK", timestamp: new Date().toISOString() });
     });
 
-    app.post("/bully/election", (req, res) => {
-      cb.onElectionMessage(req.body?.id);
-      res.sendStatus(200);
-    });
-
-    app.post("/bully/coordinator", (req, res) => {
-      cb.onCoordinatorMessage(req.body?.id);
-      res.sendStatus(200);
-    });
-
-    app.post("/bully/message", (req, res) => {
-      cb.onMessage(req.body?.event, req.body?.payload);
-      res.sendStatus(200);
-    });
+    app.post(
+      "/bully/election",
+      onJsonMessage((body) => cb.onElectionMessage(body?.id)),
+    );
+    app.post(
+      "/bully/coordinator",
+      onJsonMessage((body) => cb.onCoordinatorMessage(body?.id)),
+    );
+    app.post(
+      "/bully/message",
+      onJsonMessage((body) => cb.onMessage(body?.event, body?.payload)),
+    );
 
     app.get("/channel/stream/:event", (req, res) => {
       const eventName = req.params.event;
@@ -94,14 +106,9 @@ export class Transport {
       req.on("close", () => cb.channel.off(eventName, forward));
     });
 
-    app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-      this.logger.error(err);
-      res.status(500).json({ status: "ERROR", error: err?.message ?? String(err) });
-    });
-
     const onListening = () => this.logger.info(`Internal coordination server listening on port ${this.port}`);
     this.server = this.internalHost
-      ? app.listen(this.port, this.internalHost, onListening)
+      ? app.listen(this.port, onListening, this.internalHost)
       : app.listen(this.port, onListening);
   }
 
