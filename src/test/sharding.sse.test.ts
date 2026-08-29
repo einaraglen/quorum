@@ -3,7 +3,7 @@ import assert from "node:assert";
 import { Transport } from "../core/transport";
 import { Bully, type BullyPeer } from "../core/bully";
 import { Forum } from "../core/forum";
-import { ShardManager } from "../core/sharding";
+import { Sharding } from "../core/sharding";
 
 let portCounter = 26000;
 const nextPort = () => portCounter++;
@@ -22,13 +22,13 @@ type TestNode = {
   bully: Bully;
   transport: Transport;
   forum: Forum;
-  shard: ShardManager<number>;
+  shard: Sharding<number>;
   peer: BullyPeer;
   stop: () => void;
 };
 
 /**
- * A real Transport + Bully + Forum + ShardManager stack on its own loopback address.
+ * A real Transport + Bully + Forum + Sharding stack on its own loopback address.
  * `resolvableCluster` (defaults to just this node) is what this node's own election sees —
  * kept to itself so start() self-promotes instantly. Other nodes that need to resolve this
  * one by name get its entry through their own resolvableCluster.
@@ -37,11 +37,11 @@ const makeNode = (name: string, host: string, port: number, resolvableCluster?: 
   const self: BullyPeer = { name, host };
   const cluster = resolvableCluster ?? [self];
 
-  const getCluster = async () => ({ self, cluster });
+  const discovery = async () => ({ self, cluster });
   const transport = new Transport({ internalPort: port, internalHost: host });
-  const bully = new Bully({ getCluster, transport });
-  const forum = new Forum({ bully, transport, getCluster });
-  const shard = new ShardManager<number>({ bully, forum, ids: [] });
+  const bully = new Bully({ discovery, transport });
+  const forum = new Forum({ bully, transport, discovery });
+  const shard = new Sharding<number>({ bully, forum, ids: [] });
   shard.start();
 
   return {
@@ -50,7 +50,11 @@ const makeNode = (name: string, host: string, port: number, resolvableCluster?: 
     forum,
     shard,
     peer: self,
-    stop: () => { shard.stop(); bully.stop(); transport.stop(); },
+    stop: () => {
+      shard.stop();
+      bully.stop();
+      transport.stop();
+    },
   };
 };
 
@@ -68,9 +72,15 @@ test("subscribe receives events published by the actual remote owner", async (t)
   const port = nextPort();
 
   const owner = makeNode("owner", "127.0.0.21", port);
-  const subscriber = makeNode("subscriber", "127.0.0.22", port, [owner.peer, { name: "subscriber", host: "127.0.0.22" }]);
+  const subscriber = makeNode("subscriber", "127.0.0.22", port, [
+    owner.peer,
+    { name: "subscriber", host: "127.0.0.22" },
+  ]);
   startNode(owner);
-  t.after(() => { owner.stop(); subscriber.stop(); });
+  t.after(() => {
+    owner.stop();
+    subscriber.stop();
+  });
   await flush();
 
   owner.bully.channel.emit("assign-connections", [7]);
@@ -101,7 +111,11 @@ test("subscribe reconnects to the new owner automatically when ownership changes
   ]);
   startNode(owner1);
   startNode(owner2);
-  t.after(() => { owner1.stop(); owner2.stop(); subscriber.stop(); });
+  t.after(() => {
+    owner1.stop();
+    owner2.stop();
+    subscriber.stop();
+  });
   await flush();
 
   owner1.bully.channel.emit("assign-connections", [7]);
@@ -131,9 +145,15 @@ test("unsubscribe stops delivery and drops the underlying connection", async (t)
   const port = nextPort();
 
   const owner = makeNode("owner", "127.0.0.26", port);
-  const subscriber = makeNode("subscriber", "127.0.0.27", port, [owner.peer, { name: "subscriber", host: "127.0.0.27" }]);
+  const subscriber = makeNode("subscriber", "127.0.0.27", port, [
+    owner.peer,
+    { name: "subscriber", host: "127.0.0.27" },
+  ]);
   startNode(owner);
-  t.after(() => { owner.stop(); subscriber.stop(); });
+  t.after(() => {
+    owner.stop();
+    subscriber.stop();
+  });
   await flush();
 
   owner.bully.channel.emit("assign-connections", [7]);

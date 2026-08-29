@@ -1,11 +1,11 @@
 import type { Logger } from "./logger";
-import type { Bully, BullyPeer, GetCluster } from "./bully";
+import type { Bully, BullyPeer, Discovery } from "./bully";
 import type { Transport } from "./transport";
 
 export type ForumOptions = {
   bully: Bully;
   transport: Transport;
-  getCluster: GetCluster;
+  discovery: Discovery;
   fetchFn?: typeof fetch;
   logger?: Logger;
 };
@@ -13,14 +13,14 @@ export type ForumOptions = {
 export class Forum {
   private readonly bully: Bully;
   private readonly transport: Transport;
-  private readonly getClusterFn: GetCluster;
+  private readonly discovery: Discovery;
   private readonly fetchFn: typeof fetch;
   private readonly logger: Logger;
 
   constructor(opts: ForumOptions) {
     this.bully = opts.bully;
     this.transport = opts.transport;
-    this.getClusterFn = opts.getCluster;
+    this.discovery = opts.discovery;
     this.fetchFn = opts.fetchFn ?? this.transport.fetchFn;
     this.logger = opts.logger ?? console;
   }
@@ -33,9 +33,7 @@ export class Forum {
     }
     this.bully.channel.emit(event, payload);
     const peers = await this.bully.getPeers();
-    await Promise.all(
-      peers.map((peer) => this.transport.postToPeer(peer.host!, "/bully/message", { event, payload })),
-    );
+    await Promise.all(peers.map((peer) => this.transport.postToPeer(peer.host!, "/bully/message", { event, payload })));
   }
 
   /** Follower-only: send a custom event to whichever pod is currently leader. */
@@ -98,11 +96,10 @@ export class Forum {
       this.logger.warn(`distribute('${event}') called while not leader, ignoring`);
       return;
     }
-    const { self, cluster } = await this.getClusterFn();
-    const allPeers = [
-      self,
-      ...cluster.filter((pod) => pod.name !== self.name && pod.host),
-    ].sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
+    const { self, cluster } = await this.discovery();
+    const allPeers = [self, ...cluster.filter((pod) => pod.name !== self.name && pod.host)].sort((a, b) =>
+      (a.name ?? "").localeCompare(b.name ?? ""),
+    );
 
     await Promise.all(
       allPeers.map((peer, index) => {
@@ -141,10 +138,9 @@ export class Forum {
       }
 
       try {
-        const res = await this.fetchFn(
-          `http://${target.host}:${this.transport.port}/channel/stream/${event}`,
-          { signal: controller.signal },
-        );
+        const res = await this.fetchFn(`http://${target.host}:${this.transport.port}/channel/stream/${event}`, {
+          signal: controller.signal,
+        });
 
         if (!res.ok || !res.body) {
           this.logger.warn(`subscribeToPeer('${event}') to '${peerName}' failed to connect`);

@@ -28,10 +28,10 @@ const makePair = (): { owner: TestNode; subscriber: TestNode } => {
   ];
 
   const makeNode = (self: BullyPeer): TestNode => {
-    const getCluster = async () => ({ self, cluster });
+    const discovery = async () => ({ self, cluster });
     const transport = new Transport({ internalPort: port, internalHost: self.host });
-    const bully = new Bully({ getCluster, transport });
-    const forum = new Forum({ bully, transport, getCluster });
+    const bully = new Bully({ discovery, transport });
+    const forum = new Forum({ bully, transport, discovery });
     const start = () => {
       transport.start({
         onElectionMessage: (id) => bully.onElectionMessage(id),
@@ -41,7 +41,10 @@ const makePair = (): { owner: TestNode; subscriber: TestNode } => {
       });
       bully.start();
     };
-    const stop = () => { bully.stop(); transport.stop(); };
+    const stop = () => {
+      bully.stop();
+      transport.stop();
+    };
     return { bully, transport, forum, start, stop };
   };
 
@@ -54,7 +57,10 @@ const makePair = (): { owner: TestNode; subscriber: TestNode } => {
 test("subscribeToPeer receives events a remote peer emits on its channel", async (t) => {
   const { owner, subscriber } = makePair();
   owner.start();
-  t.after(() => { owner.stop(); subscriber.stop(); });
+  t.after(() => {
+    owner.stop();
+    subscriber.stop();
+  });
   await flush();
 
   const received: unknown[] = [];
@@ -80,7 +86,10 @@ test("subscribeToPeer receives events a remote peer emits on its channel", async
 test("closing the subscription stops further delivery", async (t) => {
   const { owner, subscriber } = makePair();
   owner.start();
-  t.after(() => { owner.stop(); subscriber.stop(); });
+  t.after(() => {
+    owner.stop();
+    subscriber.stop();
+  });
   await flush();
 
   const received: unknown[] = [];

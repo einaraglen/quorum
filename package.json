@@ -29,11 +29,17 @@
   },
   "scripts": {
     "test": "tsx --test --test-reporter=spec --test-reporter-destination=stdout src/**/*.test.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "oxlint .",
+    "check": "npm run format:check && npm run lint"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/node": "^24.9.2",
+    "oxlint": "^1.80.0",
+    "prettier": "^3.9.6",
     "tsx": "^4.23.12",
     "typescript": "^7.0.2"
   },

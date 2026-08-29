@@ -6,9 +6,9 @@ import { Forum } from "../core/forum";
 
 const makeNode = (self: BullyPeer, peers: BullyPeer[], mockFetch: typeof fetch) => {
   const transport = new Transport({ fetchFn: mockFetch });
-  const getCluster = async () => ({ self, cluster: [self, ...peers] });
-  const bully = new Bully({ getCluster, transport });
-  const forum = new Forum({ bully, transport, getCluster });
+  const discovery = async () => ({ self, cluster: [self, ...peers] });
+  const bully = new Bully({ discovery, transport });
+  const forum = new Forum({ bully, transport, discovery });
   return { bully, forum };
 };
 
@@ -24,14 +24,19 @@ test("broadcast fans an event out to every peer and fires it locally", async () 
   const { bully, forum } = makeNode(
     { name: "b", host: "10.0.0.2" },
     [{ name: "a", host: "10.0.0.1" }],
-    fakeFetchWithBody(async (url, body) => { calls.push({ url, body }); return { ok: true }; }),
+    fakeFetchWithBody(async (url, body) => {
+      calls.push({ url, body });
+      return { ok: true };
+    }),
   );
 
   await bully.startElection();
   calls.length = 0;
 
   let localPayload: unknown;
-  bully.channel.on("cache-invalidated", (payload) => { localPayload = payload; });
+  bully.channel.on("cache-invalidated", (payload) => {
+    localPayload = payload;
+  });
 
   await forum.broadcast("cache-invalidated", { key: "pods" });
 
@@ -47,11 +52,16 @@ test("broadcast is a no-op when this pod is not the leader", async () => {
   const { bully, forum } = makeNode(
     { name: "a", host: "10.0.0.1" },
     [{ name: "b", host: "10.0.0.2" }],
-    fakeFetch(async (url) => { calls.push(url); return { ok: true }; }),
+    fakeFetch(async (url) => {
+      calls.push(url);
+      return { ok: true };
+    }),
   );
 
   let fired = false;
-  bully.channel.on("cache-invalidated", () => { fired = true; });
+  bully.channel.on("cache-invalidated", () => {
+    fired = true;
+  });
 
   await forum.broadcast("cache-invalidated", { key: "pods" });
 
@@ -65,7 +75,10 @@ test("send posts a custom event to whichever pod is currently leader", async () 
   const { bully, forum } = makeNode(
     { name: "a", host: "10.0.0.1" },
     [{ name: "b", host: "10.0.0.2" }],
-    fakeFetchWithBody(async (url, body) => { calls.push({ url, body }); return { ok: true }; }),
+    fakeFetchWithBody(async (url, body) => {
+      calls.push({ url, body });
+      return { ok: true };
+    }),
   );
 
   bully.onCoordinatorMessage("b");
@@ -82,13 +95,18 @@ test("send fires locally instead of posting when this pod is already the leader"
   const { bully, forum } = makeNode(
     { name: "b", host: "10.0.0.2" },
     [{ name: "a", host: "10.0.0.1" }],
-    fakeFetch(async (url) => { calls.push(url); return { ok: true }; }),
+    fakeFetch(async (url) => {
+      calls.push(url);
+      return { ok: true };
+    }),
   );
 
   await bully.startElection();
 
   let received: unknown;
-  bully.channel.on("job-done", (payload) => { received = payload; });
+  bully.channel.on("job-done", (payload) => {
+    received = payload;
+  });
 
   await forum.send("job-done", { id: 42 });
 
@@ -101,8 +119,14 @@ test("tell posts a custom event to exactly one named peer", async () => {
 
   const { bully, forum } = makeNode(
     { name: "c", host: "10.0.0.3" },
-    [{ name: "a", host: "10.0.0.1" }, { name: "b", host: "10.0.0.2" }],
-    fakeFetchWithBody(async (url, body) => { calls.push({ url, body }); return { ok: true }; }),
+    [
+      { name: "a", host: "10.0.0.1" },
+      { name: "b", host: "10.0.0.2" },
+    ],
+    fakeFetchWithBody(async (url, body) => {
+      calls.push({ url, body });
+      return { ok: true };
+    }),
   );
 
   await bully.startElection();
@@ -121,14 +145,19 @@ test("tell fires locally instead of posting when the target is self", async () =
   const { bully, forum } = makeNode(
     { name: "b", host: "10.0.0.2" },
     [{ name: "a", host: "10.0.0.1" }],
-    fakeFetch(async (url) => { calls.push(url); return { ok: true }; }),
+    fakeFetch(async (url) => {
+      calls.push(url);
+      return { ok: true };
+    }),
   );
 
   await bully.startElection();
   calls.length = 0;
 
   let received: unknown;
-  bully.channel.on("assign-connections", (payload) => { received = payload; });
+  bully.channel.on("assign-connections", (payload) => {
+    received = payload;
+  });
 
   await forum.tell("b", "assign-connections", [1, 2, 3]);
 
@@ -142,7 +171,10 @@ test("tell is a no-op when this pod is not the leader", async () => {
   const { bully: _, forum } = makeNode(
     { name: "a", host: "10.0.0.1" },
     [{ name: "b", host: "10.0.0.2" }],
-    fakeFetch(async (url) => { calls.push(url); return { ok: true }; }),
+    fakeFetch(async (url) => {
+      calls.push(url);
+      return { ok: true };
+    }),
   );
 
   await forum.tell("b", "assign-connections", [1, 2, 3]);
@@ -156,7 +188,10 @@ test("tell drops and warns when the target peer is unknown", async () => {
   const { bully, forum } = makeNode(
     { name: "b", host: "10.0.0.2" },
     [{ name: "a", host: "10.0.0.1" }],
-    fakeFetch(async (url) => { calls.push(url); return { ok: true }; }),
+    fakeFetch(async (url) => {
+      calls.push(url);
+      return { ok: true };
+    }),
   );
 
   await bully.startElection();
@@ -172,8 +207,14 @@ test("messagePeer reaches a specific peer directly without requiring leadership"
 
   const { bully, forum } = makeNode(
     { name: "a", host: "10.0.0.1" },
-    [{ name: "b", host: "10.0.0.2" }, { name: "c", host: "10.0.0.3" }],
-    fakeFetchWithBody(async (url, body) => { calls.push({ url, body }); return { ok: true }; }),
+    [
+      { name: "b", host: "10.0.0.2" },
+      { name: "c", host: "10.0.0.3" },
+    ],
+    fakeFetchWithBody(async (url, body) => {
+      calls.push({ url, body });
+      return { ok: true };
+    }),
   );
 
   await bully.startElection();
@@ -200,7 +241,9 @@ test("messagePeer fires locally when the target is self, without requiring leade
   assert.strictEqual(bully.getStatus().isLeader, false);
 
   let received: unknown;
-  bully.channel.on("connection-event", (payload) => { received = payload; });
+  bully.channel.on("connection-event", (payload) => {
+    received = payload;
+  });
 
   await forum.messagePeer("a", "connection-event", { id: 7, value: 42 });
   bully.stop();
@@ -213,8 +256,14 @@ test("distribute splits work across the whole cluster in a stable order, self in
 
   const { bully, forum } = makeNode(
     { name: "c", host: "10.0.0.3" },
-    [{ name: "a", host: "10.0.0.1" }, { name: "b", host: "10.0.0.2" }],
-    fakeFetchWithBody(async (url, body) => { calls.push({ url, body }); return { ok: true }; }),
+    [
+      { name: "a", host: "10.0.0.1" },
+      { name: "b", host: "10.0.0.2" },
+    ],
+    fakeFetchWithBody(async (url, body) => {
+      calls.push({ url, body });
+      return { ok: true };
+    }),
   );
 
   await bully.startElection();
@@ -224,7 +273,9 @@ test("distribute splits work across the whole cluster in a stable order, self in
   const connectionIds = Array.from({ length: 30 }, (_, i) => i);
 
   let ownShare: number[] | undefined;
-  bully.channel.on("assign-connections", (share: number[]) => { ownShare = share; });
+  bully.channel.on("assign-connections", (share: number[]) => {
+    ownShare = share;
+  });
 
   await forum.distribute("assign-connections", (_peer, index, allPeers) => {
     const chunkSize = connectionIds.length / allPeers.length;
@@ -244,11 +295,16 @@ test("distribute is a no-op when this pod is not the leader", async () => {
   const { bully, forum } = makeNode(
     { name: "a", host: "10.0.0.1" },
     [{ name: "b", host: "10.0.0.2" }],
-    fakeFetch(async (url) => { calls.push(url); return { ok: true }; }),
+    fakeFetch(async (url) => {
+      calls.push(url);
+      return { ok: true };
+    }),
   );
 
   let called = false;
-  bully.channel.on("assign-connections", () => { called = true; });
+  bully.channel.on("assign-connections", () => {
+    called = true;
+  });
 
   await forum.distribute("assign-connections", () => [1, 2, 3]);
 

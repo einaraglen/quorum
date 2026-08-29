@@ -6,16 +6,13 @@ import { Bully, type BullyPeer } from "../core/bully";
 const makeBully = (self: BullyPeer, peers: BullyPeer[], mockFetch: typeof fetch) => {
   const transport = new Transport({ fetchFn: mockFetch });
   return new Bully({
-    getCluster: async () => ({ self, cluster: [self, ...peers] }),
+    discovery: async () => ({ self, cluster: [self, ...peers] }),
     transport,
   });
 };
 
 const fakeFetch = (impl: (url: string) => Promise<{ ok: boolean }>): typeof fetch =>
   (async (url: any) => impl(String(url))) as unknown as typeof fetch;
-
-const fakeFetchWithBody = (impl: (url: string, body: any) => Promise<{ ok: boolean }>): typeof fetch =>
-  (async (url: any, init: any) => impl(String(url), JSON.parse(init?.body ?? "null"))) as unknown as typeof fetch;
 
 test("becomes leader when no peer has a higher id, and emits elected", async () => {
   const calls: string[] = [];
@@ -24,9 +21,14 @@ test("becomes leader when no peer has a higher id, and emits elected", async () 
   const bully = makeBully(
     { name: "b", host: "10.0.0.2" },
     [{ name: "a", host: "10.0.0.1" }],
-    fakeFetch(async (url) => { calls.push(url); return { ok: true }; }),
+    fakeFetch(async (url) => {
+      calls.push(url);
+      return { ok: true };
+    }),
   );
-  bully.lifecycle.on("elected", () => { emittedMaster = true; });
+  bully.lifecycle.on("elected", () => {
+    emittedMaster = true;
+  });
 
   await bully.startElection();
 
@@ -43,7 +45,10 @@ test("backs off and waits when a higher peer acknowledges the election", async (
   const bully = makeBully(
     { name: "a", host: "10.0.0.1" },
     [{ name: "b", host: "10.0.0.2" }],
-    fakeFetch(async (url) => { calls.push(url); return { ok: true }; }),
+    fakeFetch(async (url) => {
+      calls.push(url);
+      return { ok: true };
+    }),
   );
 
   await bully.startElection();
@@ -75,9 +80,12 @@ test("retries the election after the coordinator wait times out", async () => {
   let electionCalls = 0;
 
   const bully = new Bully({
-    getCluster: async () => ({
+    discovery: async () => ({
       self: { name: "a", host: "10.0.0.1" },
-      cluster: [{ name: "a", host: "10.0.0.1" }, { name: "b", host: "10.0.0.2" }],
+      cluster: [
+        { name: "a", host: "10.0.0.1" },
+        { name: "b", host: "10.0.0.2" },
+      ],
     }),
     transport: new Transport({
       fetchFn: fakeFetch(async (url) => {
@@ -136,7 +144,9 @@ test("demotes a leader and emits demoted when a new leader is announced", async 
   assert.strictEqual(bully.getStatus().isLeader, true);
 
   let demoted = false;
-  bully.lifecycle.on("demoted", () => { demoted = true; });
+  bully.lifecycle.on("demoted", () => {
+    demoted = true;
+  });
 
   bully.onCoordinatorMessage("z");
 
@@ -155,10 +165,10 @@ test("getPodRoles tags every pod as leader or follower", async () => {
   await bully.startElection();
 
   const roles = await bully.getPodRoles();
-  assert.deepStrictEqual(
-    roles.map((pod) => [pod.name, pod.role]).sort(),
-    [["a", "follower"], ["b", "leader"]],
-  );
+  assert.deepStrictEqual(roles.map((pod) => [pod.name, pod.role]).sort(), [
+    ["a", "follower"],
+    ["b", "leader"],
+  ]);
 });
 
 test("onMessage emits the received event with its payload", () => {
@@ -169,7 +179,9 @@ test("onMessage emits the received event with its payload", () => {
   );
 
   let received: unknown;
-  bully.channel.on("job-done", (payload) => { received = payload; });
+  bully.channel.on("job-done", (payload) => {
+    received = payload;
+  });
 
   bully.onMessage("job-done", { id: 42 });
 
