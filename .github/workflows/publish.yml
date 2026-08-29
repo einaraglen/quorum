@@ -12,7 +12,6 @@ jobs:
       packages: write
 
     env:
-      NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       PACKAGE_NAME: "@einaraglen/quorum"
 
     steps:
@@ -22,11 +21,7 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 22
-
-      - name: Configure npm auth
-        run: |
-          npm config set @einaraglen:registry https://npm.pkg.github.com
-          npm config set //npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
+          registry-url: "https://registry.npmjs.org"
 
       - name: Install dependencies
         run: npm ci
@@ -44,7 +39,7 @@ jobs:
           candidate=$(node -p "require('./package.json').version")
           echo "Base version from package.json: $candidate"
 
-          while npm view "$PACKAGE_NAME@$candidate" version --registry=https://npm.pkg.github.com >/dev/null 2>&1; do
+          while npm view "$PACKAGE_NAME@$candidate" version >/dev/null 2>&1; do
             IFS='.' read -r major minor patch <<< "$candidate"
             candidate="$major.$minor.$((patch + 1))"
           done
@@ -57,8 +52,17 @@ jobs:
           jq --arg v "$NEW_VERSION" '.version = $v' package.json > package.tmp.json
           mv package.tmp.json package.json
 
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_ACCESS_TOKEN }}
+        run: npm publish
+
       - name: Publish to GitHub Packages
-        run: npm publish --registry=https://npm.pkg.github.com
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npm config set //npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
+          npm publish --registry=https://npm.pkg.github.com
 
       - name: Tag release
         run: |
