@@ -9,6 +9,14 @@ const nextPort = () => portCounter++;
 
 const flush = (ms = 50) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Polls until `check()` is true or `timeoutMs` elapses, instead of a fixed sleep. */
+const waitFor = async (check: () => boolean, timeoutMs = 2000): Promise<void> => {
+  const deadline = Date.now() + timeoutMs;
+  while (!check() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+};
+
 type TestNode = { bully: Bully; transport: Transport; forum: Forum; start: () => void; stop: () => void };
 
 /** Two real Transport + Bully + Forum instances, each on its own loopback address. */
@@ -53,11 +61,13 @@ test("subscribeToPeer receives events a remote peer emits on its channel", async
   const close = subscriber.forum.subscribeToPeer("owner", "connection-event", (payload) => {
     received.push(payload);
   });
-  await flush();
+  // Wait for the SSE GET to actually land server-side, rather than assuming a fixed delay is
+  // enough — otherwise events emitted before the connection is up are lost, not queued.
+  await waitFor(() => owner.bully.channel.listenerCount("connection-event") > 0);
 
   owner.bully.channel.emit("connection-event", { id: 7, value: "first" });
   owner.bully.channel.emit("connection-event", { id: 7, value: "second" });
-  await flush();
+  await waitFor(() => received.length >= 2);
 
   close();
 
@@ -77,10 +87,10 @@ test("closing the subscription stops further delivery", async (t) => {
   const close = subscriber.forum.subscribeToPeer("owner", "connection-event", (payload) => {
     received.push(payload);
   });
-  await flush();
+  await waitFor(() => owner.bully.channel.listenerCount("connection-event") > 0);
 
   owner.bully.channel.emit("connection-event", { id: 1 });
-  await flush();
+  await waitFor(() => received.length >= 1);
   close();
   await flush();
 

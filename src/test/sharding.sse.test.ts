@@ -10,6 +10,14 @@ const nextPort = () => portCounter++;
 
 const flush = (ms = 50) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Polls until `check()` is true or `timeoutMs` elapses, instead of a fixed sleep. */
+const waitFor = async (check: () => boolean, timeoutMs = 2000): Promise<void> => {
+  const deadline = Date.now() + timeoutMs;
+  while (!check() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+};
+
 type TestNode = {
   bully: Bully;
   transport: Transport;
@@ -70,10 +78,12 @@ test("subscribe receives events published by the actual remote owner", async (t)
 
   const received: unknown[] = [];
   const close = subscriber.shard.subscribe(7, (payload) => received.push(payload));
-  await flush();
+  // Wait for the SSE GET to actually land server-side, rather than assuming a fixed delay is
+  // enough — otherwise events published before the connection is up are lost, not queued.
+  await waitFor(() => owner.bully.channel.listenerCount("connection-event") > 0);
 
   owner.shard.publish(7, { reading: 42 });
-  await flush();
+  await waitFor(() => received.length >= 1);
   close();
 
   assert.deepStrictEqual(received, [{ reading: 42 }]);
@@ -99,19 +109,19 @@ test("subscribe reconnects to the new owner automatically when ownership changes
 
   const received: unknown[] = [];
   const close = subscriber.shard.subscribe(7, (payload) => received.push(payload));
-  await flush();
+  await waitFor(() => owner1.bully.channel.listenerCount("connection-event") > 0);
 
   owner1.shard.publish(7, { from: "owner1" });
-  await flush();
+  await waitFor(() => received.length >= 1);
 
   owner1.bully.channel.emit("release-connections", [7]);
   owner2.bully.channel.emit("assign-connections", [7]);
   subscriber.bully.channel.emit("ownership-map", [[7, "owner2"]]);
-  await flush();
+  await waitFor(() => owner2.bully.channel.listenerCount("connection-event") > 0);
 
   owner1.shard.publish(7, { from: "owner1-again" }); // should be dropped: owner1 no longer holds it
   owner2.shard.publish(7, { from: "owner2" });
-  await flush();
+  await waitFor(() => received.length >= 2);
   close();
 
   assert.deepStrictEqual(received, [{ from: "owner1" }, { from: "owner2" }]);
@@ -131,10 +141,10 @@ test("unsubscribe stops delivery and drops the underlying connection", async (t)
 
   const received: unknown[] = [];
   const close = subscriber.shard.subscribe(7, (payload) => received.push(payload));
-  await flush();
+  await waitFor(() => owner.bully.channel.listenerCount("connection-event") > 0);
 
   owner.shard.publish(7, { first: true });
-  await flush();
+  await waitFor(() => received.length >= 1);
   close();
   await flush();
 

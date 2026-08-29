@@ -1,0 +1,73 @@
+name: Publish
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  publish-package:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PACKAGE_NAME: "@einaraglen/quorum"
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Configure npm auth
+        run: |
+          npm config set @einaraglen:registry https://npm.pkg.github.com
+          npm config set //npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build project
+        run: npm run build
+
+      - name: Test project
+        run: npm test
+
+      - name: Determine next version
+        run: |
+          # package.json's version is the floor: bump it yourself (major/minor/patch) to control
+          # any of those fields. If it's already published, keep bumping the patch until free.
+          candidate=$(node -p "require('./package.json').version")
+          echo "Base version from package.json: $candidate"
+
+          while npm view "$PACKAGE_NAME@$candidate" version --registry=https://npm.pkg.github.com >/dev/null 2>&1; do
+            IFS='.' read -r major minor patch <<< "$candidate"
+            candidate="$major.$minor.$((patch + 1))"
+          done
+
+          echo "Next version: $candidate"
+          echo "NEW_VERSION=$candidate" >> "$GITHUB_ENV"
+
+      - name: Update package.json version
+        run: |
+          jq --arg v "$NEW_VERSION" '.version = $v' package.json > package.tmp.json
+          mv package.tmp.json package.json
+
+      - name: Publish to GitHub Packages
+        run: npm publish --access restricted --registry=https://npm.pkg.github.com
+
+      - name: Tag release
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "v$NEW_VERSION"
+          git push origin "v$NEW_VERSION"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "v$NEW_VERSION" --title "v$NEW_VERSION" --generate-notes
