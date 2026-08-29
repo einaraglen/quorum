@@ -1,0 +1,30 @@
+{
+  "name": "quorum",
+  "version": "1.0.0",
+  "description": "Distributed pod coordination: Bully leader election and work sharding",
+  "keywords": [
+    "leader-election",
+    "sharding",
+    "distributed-systems"
+  ],
+  "license": "ISC",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "test": "tsx --test src/**/*.test.ts",
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.9.2",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "express": "^5.2.1"
+  }
+}
