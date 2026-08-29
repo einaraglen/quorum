@@ -11,11 +11,10 @@ jobs:
       contents: write
       packages: write
 
-    env:
-      PACKAGE_NAME: "@einaraglen/quorum"
-
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -34,18 +33,24 @@ jobs:
 
       - name: Determine next version
         run: |
-          # package.json's version is the floor: bump it yourself (major/minor/patch) to control
-          # any of those fields. If it's already published, keep bumping the patch until free.
-          candidate=$(node -p "require('./package.json').version")
-          echo "Base version from package.json: $candidate"
+          latest_tag=$(git tag --list 'v*.*.*' | sed 's/^v//' | sort -V | tail -n1)
+          latest_tag=${latest_tag:-0.0.0}
+          echo "Latest tag: v$latest_tag"
 
-          while npm view "$PACKAGE_NAME@$candidate" version >/dev/null 2>&1; do
-            IFS='.' read -r major minor patch <<< "$candidate"
-            candidate="$major.$minor.$((patch + 1))"
-          done
+          pkg_version=$(node -p "require('./package.json').version")
+          echo "package.json version: $pkg_version"
 
-          echo "Next version: $candidate"
-          echo "NEW_VERSION=$candidate" >> "$GITHUB_ENV"
+          greater=$(printf '%s\n%s\n' "$pkg_version" "$latest_tag" | sort -V | tail -n1)
+
+          if [ "$greater" = "$pkg_version" ] && [ "$pkg_version" != "$latest_tag" ]; then
+            new_version="$pkg_version"
+          else
+            IFS='.' read -r major minor patch <<< "$latest_tag"
+            new_version="$major.$minor.$((patch + 1))"
+          fi
+
+          echo "Next version: $new_version"
+          echo "NEW_VERSION=$new_version" >> "$GITHUB_ENV"
 
       - name: Update package.json version
         run: |
