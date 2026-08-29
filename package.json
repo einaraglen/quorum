@@ -1,5 +1,5 @@
 {
-  "name": "quorum",
+  "name": "@einaraglen/quorum",
   "version": "1.0.0",
   "description": "Distributed pod coordination: Bully leader election and work sharding",
   "keywords": [
@@ -8,14 +8,25 @@
     "distributed-systems"
   ],
   "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/einaraglen/quorum.git"
+  },
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "default": "./src/index.ts"
+      "default": "./dist/index.js"
     }
   },
   "scripts": {
-    "test": "tsx --test src/**/*.test.ts",
+    "test": "tsx --test --test-reporter=spec --test-reporter-destination=stdout src/**/*.test.ts",
+    "test:ci": "tsx --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=test-results.xml src/**/*.test.ts",
     "build": "tsc"
   },
   "devDependencies": {
