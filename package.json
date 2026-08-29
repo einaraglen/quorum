@@ -26,7 +26,6 @@
   },
   "scripts": {
     "test": "tsx --test --test-reporter=spec --test-reporter-destination=stdout src/**/*.test.ts",
-    "test:ci": "tsx --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=test-results.xml src/**/*.test.ts",
     "build": "tsc"
   },
   "devDependencies": {
