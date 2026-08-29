@@ -1,11 +1,11 @@
 import { Transport } from "./transport";
-import { Bully, type GetCluster } from "./bully";
+import { Bully, type Discovery } from "./bully";
 import { Forum } from "./forum";
-import { ShardManager } from "./sharding";
+import { Sharding } from "./sharding";
 import type { Logger } from "./logger";
 
 export type QuorumOptions<TId = string> = {
-  getCluster: GetCluster;
+  discovery: Discovery;
   ids: TId[];
   fetchFn?: typeof fetch;
   internalPort?: number;
@@ -26,7 +26,7 @@ export class Quorum<TId = string> implements Disposable {
   private readonly transport: Transport;
   private readonly bully: Bully;
   private readonly forum: Forum;
-  private readonly shard: ShardManager<TId>;
+  private readonly shard: Sharding<TId>;
 
   constructor(opts: QuorumOptions<TId>) {
     this.transport = new Transport({
@@ -37,7 +37,7 @@ export class Quorum<TId = string> implements Disposable {
       logger: opts.logger,
     });
     this.bully = new Bully({
-      getCluster: opts.getCluster,
+      discovery: opts.discovery,
       transport: this.transport,
       coordinatorWaitMs: opts.coordinatorWaitMs,
       heartbeatIntervalMs: opts.heartbeatIntervalMs,
@@ -46,11 +46,11 @@ export class Quorum<TId = string> implements Disposable {
     this.forum = new Forum({
       bully: this.bully,
       transport: this.transport,
-      getCluster: opts.getCluster,
+      discovery: opts.discovery,
       fetchFn: opts.fetchFn,
       logger: opts.logger,
     });
-    this.shard = new ShardManager<TId>({
+    this.shard = new Sharding<TId>({
       bully: this.bully,
       forum: this.forum,
       ids: opts.ids,
@@ -63,18 +63,45 @@ export class Quorum<TId = string> implements Disposable {
     });
   }
 
-  public isLeader(): boolean { return this.bully.isLeader(); }
-  public getStatus() { return this.bully.getStatus(); }
-  public async getPodRoles() { return this.bully.getPodRoles(); }
+  public isLeader(): boolean {
+    return this.bully.isLeader();
+  }
+  public getStatus() {
+    return this.bully.getStatus();
+  }
+  public async getPodRoles() {
+    return this.bully.getPodRoles();
+  }
 
   public subscribe(id: TId, onEvent: (payload: unknown) => void): () => void {
     return this.shard.subscribe(id, onEvent);
   }
-  public publish(id: TId, payload: unknown): void { this.shard.publish(id, payload); }
-  public getOwner(id: TId): string | undefined { return this.shard.getOwner(id); }
-  public getOwnership(): Map<TId, string> { return this.shard.getOwnership(); }
-  public getHeldIds(): TId[] { return this.shard.getHeldIds(); }
-  public async updateIds(ids: TId[]): Promise<void> { return this.shard.updateIds(ids); }
+  public publish(id: TId, payload: unknown): void {
+    this.shard.publish(id, payload);
+  }
+  public getOwner(id: TId): string | undefined {
+    return this.shard.getOwner(id);
+  }
+  public getOwnership(): Map<TId, string> {
+    return this.shard.getOwnership();
+  }
+  public getHeldIds(): TId[] {
+    return this.shard.getHeldIds();
+  }
+  public async updateIds(ids: TId[]): Promise<void> {
+    return this.shard.updateIds(ids);
+  }
+
+  /** Fires with the ids just gained whenever this pod's held ids grow. Returns an unsubscribe function. */
+  public onAssigned(onEvent: (ids: TId[]) => void): () => void {
+    this.shard.lifecycle.on("assigned", onEvent);
+    return () => this.shard.lifecycle.off("assigned", onEvent);
+  }
+  /** Fires with the ids just lost whenever this pod's held ids shrink. Returns an unsubscribe function. */
+  public onReleased(onEvent: (ids: TId[]) => void): () => void {
+    this.shard.lifecycle.on("released", onEvent);
+    return () => this.shard.lifecycle.off("released", onEvent);
+  }
 
   public start(): void {
     this.transport.start({

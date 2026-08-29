@@ -3,9 +3,9 @@ import assert from "node:assert";
 import { Transport } from "../core/transport";
 import { Bully, type BullyPeer } from "../core/bully";
 import { Forum } from "../core/forum";
-import { ShardManager } from "../core/sharding";
+import { Sharding } from "../core/sharding";
 
-type Node = { name: string; bully: Bully; shard: ShardManager<number> };
+type Node = { name: string; bully: Bully; shard: Sharding<number> };
 
 const REPORT_TIMEOUT_MS = 30;
 const REBALANCE_INTERVAL_MS = 60;
@@ -48,11 +48,11 @@ const makeCluster = (allNames: string[], ids: number[], opts: ClusterOptions = {
   const addToCluster = (name: string) => {
     cluster = [...cluster, { name, host: hostFor(name) }];
 
-    const getCluster = async () => ({ self: { name, host: hostFor(name) }, cluster });
+    const discovery = async () => ({ self: { name, host: hostFor(name) }, cluster });
     const transport = new Transport({ fetchFn: fetchFor() });
-    const bully = new Bully({ getCluster, transport });
-    const forum = new Forum({ bully, transport, getCluster });
-    const shard = new ShardManager({
+    const bully = new Bully({ discovery, transport });
+    const forum = new Forum({ bully, transport, discovery });
+    const shard = new Sharding({
       bully,
       forum,
       ids,
@@ -104,7 +104,43 @@ test("initial election distributes every id across the cluster with no gaps or d
   await flush();
 
   const held = [...cluster.nodes.values()].flatMap((node) => node.shard.getHeldIds());
-  assert.deepStrictEqual([...held].sort((x, y) => x - y), [0, 1, 2, 3, 4, 5, 6, 7]);
+  assert.deepStrictEqual(
+    [...held].sort((x, y) => x - y),
+    [0, 1, 2, 3, 4, 5, 6, 7],
+  );
+});
+
+test("lifecycle emits 'assigned' and 'released' as held ids change", async (t) => {
+  const cluster = makeCluster(["a", "b"], [0, 1, 2, 3]);
+  t.after(() => cluster.stopAll());
+
+  const [a, b] = ["a", "b"].map((name) => cluster.nodes.get(name)!);
+
+  const assignedOnA: number[][] = [];
+  const assignedOnB: number[][] = [];
+  a.shard.lifecycle.on("assigned", (ids: number[]) => assignedOnA.push(ids));
+  b.shard.lifecycle.on("assigned", (ids: number[]) => assignedOnB.push(ids));
+
+  await cluster.startAll();
+  await flush();
+
+  const allAssigned = [...assignedOnA.flat(), ...assignedOnB.flat()].sort((x, y) => x - y);
+  assert.deepStrictEqual(allAssigned, [0, 1, 2, 3], "assigned events should account for every id handed out");
+
+  const leader = a.bully.getStatus().isLeader ? a : b;
+  const releasedOnA: number[][] = [];
+  const releasedOnB: number[][] = [];
+  a.shard.lifecycle.on("released", (ids: number[]) => releasedOnA.push(ids));
+  b.shard.lifecycle.on("released", (ids: number[]) => releasedOnB.push(ids));
+
+  await leader.shard.updateIds([]);
+  await flush();
+
+  assert.deepStrictEqual(a.shard.getHeldIds(), []);
+  assert.deepStrictEqual(b.shard.getHeldIds(), []);
+
+  const allReleased = [...releasedOnA.flat(), ...releasedOnB.flat()].sort((x, y) => x - y);
+  assert.deepStrictEqual(allReleased, [0, 1, 2, 3], "released events should account for every id taken back");
 });
 
 test("reconciliation after a leader dies reassigns its share and rebalances the survivors", async (t) => {
@@ -155,7 +191,11 @@ test("a returning pod gets rebalanced back into the rotation instead of sitting 
   await flush();
 
   const { min, max } = fairRange(8, 3);
-  for (const [name, node] of [["a", a], ["b", b], ["c", c]] as const) {
+  for (const [name, node] of [
+    ["a", a],
+    ["b", b],
+    ["c", c],
+  ] as const) {
     const count = node.shard.getHeldIds().length;
     assert.ok(count >= min && count <= max, `${name} should hold a fair share (${min}-${max}), got ${count}`);
   }
@@ -208,7 +248,11 @@ test("growing the work bundle assigns the new ids without touching what's alread
   assert.deepStrictEqual(allHeld, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
 
   const { min, max } = fairRange(12, 3);
-  for (const [name, node] of [["a", a], ["b", b], ["c", c]] as const) {
+  for (const [name, node] of [
+    ["a", a],
+    ["b", b],
+    ["c", c],
+  ] as const) {
     const count = node.shard.getHeldIds().length;
     assert.ok(count >= min && count <= max, `${name} should hold a fair share (${min}-${max}), got ${count}`);
   }
@@ -320,20 +364,23 @@ test("reconcile proceeds once reachable peers meet quorum", async (t) => {
   await flush();
 
   const held = [...cluster.nodes.values()].flatMap((node) => node.shard.getHeldIds());
-  assert.deepStrictEqual([...held].sort((x, y) => x - y), [0, 1, 2, 3, 4, 5, 6, 7]);
+  assert.deepStrictEqual(
+    [...held].sort((x, y) => x - y),
+    [0, 1, 2, 3, 4, 5, 6, 7],
+  );
 });
 
 test("onSustainedQuorumLoss fires once after quorumFailureThreshold consecutive failures", async (t) => {
-  const getCluster = async () => ({
+  const discovery = async () => ({
     self: { name: "solo", host: "10.0.0.1" },
     cluster: [{ name: "solo", host: "10.0.0.1" }],
   });
   const transport = new Transport();
-  const bully = new Bully({ getCluster, transport });
-  const forum = new Forum({ bully, transport, getCluster });
+  const bully = new Bully({ discovery, transport });
+  const forum = new Forum({ bully, transport, discovery });
 
   let triggerCount = 0;
-  const shard = new ShardManager<number>({
+  const shard = new Sharding<number>({
     bully,
     forum,
     ids: [0, 1, 2, 3],
@@ -392,4 +439,3 @@ test("consecutive quorum failure count resets once quorum is regained", async (t
   await b.shard.reconcile();
   assert.strictEqual(triggerCount, 1, "two fresh consecutive failures after the reset should trigger");
 });
-

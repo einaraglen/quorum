@@ -4,10 +4,10 @@ import type { Transport } from "./transport";
 
 export type BullyPeer = { name?: string; host?: string };
 export type BullyCluster = { self: BullyPeer; cluster: BullyPeer[] };
-export type GetCluster = () => Promise<BullyCluster>;
+export type Discovery = () => Promise<BullyCluster>;
 
 export type BullyOptions = {
-  getCluster: GetCluster;
+  discovery: Discovery;
   transport: Transport;
   coordinatorWaitMs?: number;
   heartbeatIntervalMs?: number;
@@ -18,7 +18,7 @@ export class Bully implements Disposable {
   public readonly lifecycle = new EventEmitter();
   public readonly channel = new EventEmitter();
 
-  private readonly getClusterFn: GetCluster;
+  private readonly discovery: Discovery;
   private readonly transport: Transport;
   private readonly coordinatorWaitMs: number;
   private readonly heartbeatIntervalMs: number;
@@ -31,7 +31,7 @@ export class Bully implements Disposable {
   private heartbeatInterval?: NodeJS.Timeout;
 
   constructor(opts: BullyOptions) {
-    this.getClusterFn = opts.getCluster;
+    this.discovery = opts.discovery;
     this.transport = opts.transport;
     this.coordinatorWaitMs = opts.coordinatorWaitMs ?? 4000;
     this.heartbeatIntervalMs = opts.heartbeatIntervalMs ?? 5000;
@@ -47,7 +47,7 @@ export class Bully implements Disposable {
   }
 
   public async getPodRoles() {
-    const { cluster } = await this.getClusterFn();
+    const { cluster } = await this.discovery();
     return cluster.map((pod) => ({
       name: pod.name,
       host: pod.host,
@@ -57,7 +57,7 @@ export class Bully implements Disposable {
 
   /** Returns all cluster peers except self. Side-effect: populates selfId. */
   public async getPeers(): Promise<BullyPeer[]> {
-    const { self, cluster } = await this.getClusterFn();
+    const { self, cluster } = await this.discovery();
     this.selfId = self.name;
     return cluster.filter((pod) => pod.name !== self.name && pod.host);
   }
@@ -73,7 +73,7 @@ export class Bully implements Disposable {
     );
 
     // Emitted only after peers have been told, so an "elected" listener that immediately talks
-    // to peers (e.g. ShardManager.reconcile()) doesn't race ahead of them learning who's leader.
+    // to peers (e.g. Sharding.reconcile()) doesn't race ahead of them learning who's leader.
     if (!wasLeader) this.lifecycle.emit("elected");
   }
 

@@ -3,7 +3,7 @@ import type { Bully } from "./bully";
 import type { Forum } from "./forum";
 import type { Logger } from "./logger";
 
-export type ShardManagerOptions<TId> = {
+export type ShardingOptions<TId> = {
   bully: Bully;
   forum: Forum;
   ids: TId[];
@@ -35,7 +35,10 @@ export type ShardManagerOptions<TId> = {
 type HoldingsReport<TId> = { peer: string; ids: TId[] };
 type ConnectionEvent<TId> = { id: TId; payload: unknown };
 
-export class ShardManager<TId = string> implements Disposable {
+export class Sharding<TId = string> implements Disposable {
+  /** Emits `"assigned"` / `"released"` (each with the delta of ids, not the full held set) whenever this pod's held ids change. */
+  public readonly lifecycle = new EventEmitter();
+
   private bully: Bully;
   private forum: Forum;
   private allIds: TId[];
@@ -48,6 +51,8 @@ export class ShardManager<TId = string> implements Disposable {
   private consecutiveQuorumFailures = 0;
   /** Ensures sustainedQuorumLossCallback fires once per episode, not on every failure past threshold. */
   private hasTriggeredSustainedLoss = false;
+  /** Guards against a periodic rebalance tick overlapping an explicit reconcile() already in flight. */
+  private reconcileInFlight = false;
   private heldIds = new Set<TId>();
   private ownership = new Map<TId, string>();
   private rebalanceInterval?: NodeJS.Timeout;
@@ -56,7 +61,7 @@ export class ShardManager<TId = string> implements Disposable {
   /** Safety net: any subscribe() the caller never explicitly closed gets torn down in stop(). */
   private activeSubscriptions = new Set<() => void>();
 
-  constructor(opts: ShardManagerOptions<TId>) {
+  constructor(opts: ShardingOptions<TId>) {
     this.bully = opts.bully;
     this.forum = opts.forum;
     this.allIds = opts.ids;
@@ -135,11 +140,13 @@ export class ShardManager<TId = string> implements Disposable {
   private onAssign = (ids: TId[]) => {
     for (const id of ids) this.heldIds.add(id);
     this.logger.debug(`Now holding ${this.heldIds.size} id(s)`);
+    this.lifecycle.emit("assigned", ids);
   };
 
   private onRelease = (ids: TId[]) => {
     for (const id of ids) this.heldIds.delete(id);
     this.logger.debug(`Released ${ids.length} id(s), now holding ${this.heldIds.size}`);
+    this.lifecycle.emit("released", ids);
   };
 
   private onReportRequest = () => {
@@ -196,7 +203,7 @@ export class ShardManager<TId = string> implements Disposable {
     this.bully.lifecycle.off("demoted", this.onDemoted);
     this.onDemoted();
 
-    for (const unsubscribe of [...this.activeSubscriptions]) unsubscribe();
+    for (const unsubscribe of this.activeSubscriptions) unsubscribe();
   }
 
   public [Symbol.dispose]() {
@@ -226,6 +233,17 @@ export class ShardManager<TId = string> implements Disposable {
    * assign/release messages needed to converge on that target.
    */
   public async reconcile() {
+    if (this.reconcileInFlight) return;
+    this.reconcileInFlight = true;
+
+    try {
+      await this.doReconcile();
+    } finally {
+      this.reconcileInFlight = false;
+    }
+  }
+
+  private async doReconcile() {
     const reports = new Map<string, TId[]>();
     const { self } = this.bully.getStatus();
     if (self) reports.set(self, this.getHeldIds());
