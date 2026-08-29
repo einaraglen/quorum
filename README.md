@@ -16,7 +16,7 @@ When a pod starts up it runs an election: it contacts every peer with a higher n
 
 ### Transport — the wire
 
-All coordination travels over a single internal HTTP port (default `4001`). Each pod runs a small Express server on that port with five endpoints:
+All coordination travels over a single internal HTTP port (default `4001`). Each pod runs a small tinyhttp server on that port with five endpoints:
 
 | Route                        | Purpose                                       |
 | ---------------------------- | --------------------------------------------- |
