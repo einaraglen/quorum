@@ -1,9 +1,9 @@
 ﻿import { test } from "node:test";
 import assert from "node:assert";
-import { Transport } from "../core/transport";
-import { Bully, type BullyPeer } from "../core/bully";
-import { Forum } from "../core/forum";
-import { Sharding } from "../core/sharding";
+import { Transport } from "../core/transport.js";
+import { Bully, type BullyPeer } from "../core/bully.js";
+import { Forum } from "../core/forum.js";
+import { Sharding } from "../core/sharding.js";
 
 type Node = { name: string; bully: Bully; shard: Sharding<number> };
 

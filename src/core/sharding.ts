@@ -1,7 +1,7 @@
 import { EventEmitter } from "events";
-import type { Bully } from "./bully";
-import type { Forum } from "./forum";
-import type { Logger } from "./logger";
+import type { Bully } from "./bully.js";
+import type { Forum } from "./forum.js";
+import type { Logger } from "./logger.js";
 
 export type ShardingOptions<TId> = {
   bully: Bully;

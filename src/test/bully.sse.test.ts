@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { Transport } from "../core/transport";
-import { Bully, type BullyPeer } from "../core/bully";
-import { Forum } from "../core/forum";
+import { Transport } from "../core/transport.js";
+import { Bully, type BullyPeer } from "../core/bully.js";
+import { Forum } from "../core/forum.js";
 
 let portCounter = 25000;
 const nextPort = () => portCounter++;
