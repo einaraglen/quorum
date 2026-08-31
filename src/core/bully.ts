@@ -1,6 +1,6 @@
 import { EventEmitter } from "events";
-import type { Logger } from "./logger";
-import type { Transport } from "./transport";
+import type { Logger } from "./logger.js";
+import type { Transport } from "./transport.js";
 
 export type BullyPeer = { name?: string; host?: string };
 export type BullyCluster = { self: BullyPeer; cluster: BullyPeer[] };

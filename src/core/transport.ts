@@ -1,6 +1,6 @@
 import { EventEmitter } from "events";
 import { App } from "@tinyhttp/app";
-import type { Logger } from "./logger";
+import type { Logger } from "./logger.js";
 
 export type TransportOptions = {
   fetchFn?: typeof fetch;

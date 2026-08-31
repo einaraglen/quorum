@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert";
 import { EventEmitter } from "node:events";
 import { App } from "@tinyhttp/app";
-import { Transport, type TransportCallbacks } from "../core/transport";
+import { Transport, type TransportCallbacks } from "../core/transport.js";
 
 let portCounter = 27000;
 const nextPort = () => portCounter++;

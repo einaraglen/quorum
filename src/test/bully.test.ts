@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { Transport } from "../core/transport";
-import { Bully, type BullyPeer } from "../core/bully";
+import { Transport } from "../core/transport.js";
+import { Bully, type BullyPeer } from "../core/bully.js";
 
 const makeBully = (self: BullyPeer, peers: BullyPeer[], mockFetch: typeof fetch) => {
   const transport = new Transport({ fetchFn: mockFetch });

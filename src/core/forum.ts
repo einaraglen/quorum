@@ -1,6 +1,6 @@
-import type { Logger } from "./logger";
-import type { Bully, BullyPeer, Discovery } from "./bully";
-import type { Transport } from "./transport";
+import type { Logger } from "./logger.js";
+import type { Bully, BullyPeer, Discovery } from "./bully.js";
+import type { Transport } from "./transport.js";
 
 export type ForumOptions = {
   bully: Bully;

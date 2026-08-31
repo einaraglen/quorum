@@ -1,8 +1,8 @@
-import { Transport } from "./transport";
-import { Bully, type Discovery } from "./bully";
-import { Forum } from "./forum";
-import { Sharding } from "./sharding";
-import type { Logger } from "./logger";
+import { Transport } from "./transport.js";
+import { Bully, type Discovery } from "./bully.js";
+import { Forum } from "./forum.js";
+import { Sharding } from "./sharding.js";
+import type { Logger } from "./logger.js";
 
 export type QuorumOptions<TId = string> = {
   discovery: Discovery;
