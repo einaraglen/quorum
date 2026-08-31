@@ -16,6 +16,12 @@ export type ForumOptions = {
  */
 export type DistributeResponse<R> = { peer: string; response: R };
 
+/**
+ * What a request() handler receives on the target side. Reply via `forum.respond(envelope, ...)`,
+ * passing this same envelope back — it carries the correlation id and the requester's name.
+ */
+export type RequestEnvelope<T> = { requestId: string; from: string; payload: T };
+
 export class Forum {
   private readonly bully: Bully;
   private readonly transport: Transport;
@@ -88,6 +94,45 @@ export class Forum {
       return;
     }
     await this.transport.postToPeer(target.host, "/bully/message", { event, payload });
+  }
+
+  /**
+   * Peer-to-peer request/response: message one peer and wait for its reply, correlated by a
+   * generated request id so concurrent requests to the same peer/event never cross-resolve.
+   * Unlike distributeAndCollect this isn't leader-only and doesn't silently drop a missing
+   * answer — it rejects if the target doesn't respond within `responseTimeoutMs`.
+   *
+   * The target's handler receives a `RequestEnvelope<T>` (via onMessage/channel) and must reply
+   * with `forum.respond(envelope, response)`.
+   */
+  public async request<T, R>(peerName: string, event: string, payload: T, responseTimeoutMs = 2000): Promise<R> {
+    const { self } = this.bully.getStatus();
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const responseEvent = `__response:${requestId}`;
+
+    const response = new Promise<R>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.bully.channel.off(responseEvent, onResponse);
+        reject(new Error(`request('${event}') to '${peerName}' timed out after ${responseTimeoutMs}ms`));
+      }, responseTimeoutMs);
+
+      const onResponse = (payload: R) => {
+        clearTimeout(timer);
+        resolve(payload);
+      };
+
+      this.bully.channel.once(responseEvent, onResponse);
+    });
+
+    const envelope: RequestEnvelope<T> = { requestId, from: self!, payload };
+    await this.messagePeer(peerName, event, envelope);
+
+    return response;
+  }
+
+  /** Reply to a request(), addressed back to the requester via the envelope it sent. */
+  public async respond<R>(envelope: Pick<RequestEnvelope<unknown>, "requestId" | "from">, response: R): Promise<void> {
+    await this.messagePeer(envelope.from, `__response:${envelope.requestId}`, response);
   }
 
   /**
