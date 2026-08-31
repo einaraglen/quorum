@@ -18,6 +18,49 @@ const fakeFetch = (impl: (url: string) => Promise<{ ok: boolean }>): typeof fetc
 const fakeFetchWithBody = (impl: (url: string, body: any) => Promise<{ ok: boolean }>): typeof fetch =>
   (async (url: any, init: any) => impl(String(url), JSON.parse(init?.body ?? "null"))) as unknown as typeof fetch;
 
+/**
+ * A tiny in-memory two-node "network": each node's fetchFn routes /bully/election,
+ * /bully/coordinator and /bully/message posts straight into the matching peer's real Bully
+ * instance, so request()/respond() can be exercised as an actual round trip across two distinct
+ * Forum instances instead of one node talking to itself. Election is run to completion on every
+ * node before returning, so `self` is populated and no node is left retrying in the background —
+ * callers must still call `stopAll()` when done to clear the heartbeat interval the winner runs.
+ */
+const makeNetwork = async (names: string[]) => {
+  const peers: BullyPeer[] = names.map((name, i) => ({ name, host: `10.0.0.${i + 1}` }));
+  const bullies = new Map<string, Bully>();
+
+  const fetchFn: typeof fetch = (async (url: any, init: any) => {
+    const parsed = new URL(String(url));
+    const target = peers.find((p) => p.host === parsed.hostname);
+    const bully = target && bullies.get(target.name);
+    if (!bully) return { ok: false } as Response;
+
+    const body = init?.body ? JSON.parse(init.body) : {};
+    if (parsed.pathname === "/bully/election") bully.onElectionMessage(body.id);
+    else if (parsed.pathname === "/bully/coordinator") bully.onCoordinatorMessage(body.id);
+    else if (parsed.pathname === "/bully/message") bully.onMessage(body.event, body.payload);
+    return { ok: true } as Response;
+  }) as unknown as typeof fetch;
+
+  const forums = new Map<string, Forum>();
+  for (const self of peers) {
+    const discovery = async () => ({ self, cluster: peers });
+    const transport = new Transport({ fetchFn });
+    const bully = new Bully({ discovery, transport });
+    bullies.set(self.name, bully);
+    forums.set(self.name, new Forum({ bully, transport, discovery }));
+  }
+
+  await Promise.all([...bullies.values()].map((bully) => bully.startElection()));
+
+  return {
+    forum: (name: string) => forums.get(name)!,
+    bully: (name: string) => bullies.get(name)!,
+    stopAll: () => bullies.forEach((bully) => bully.stop()),
+  };
+};
+
 test("broadcast fans an event out to every peer and fires it locally", async () => {
   const calls: { url: string; body: any }[] = [];
 
@@ -249,6 +292,112 @@ test("messagePeer fires locally when the target is self, without requiring leade
   bully.stop();
 
   assert.deepStrictEqual(received, { id: 7, value: 42 });
+});
+
+test("request resolves with the value the target's respond() sends back, self included", async () => {
+  const { bully, forum } = makeNode(
+    { name: "a", host: "10.0.0.1" },
+    [{ name: "b", host: "10.0.0.2" }],
+    fakeFetch(async () => ({ ok: true })),
+  );
+
+  await bully.startElection();
+
+  bully.channel.on("get-status", (envelope) => {
+    forum.respond(envelope, { ok: true, status: "running" });
+  });
+
+  const result = await forum.request<null, { ok: boolean; status: string }>("a", "get-status", null);
+  bully.stop();
+
+  assert.deepStrictEqual(result, { ok: true, status: "running" });
+});
+
+test("request delivers to a specific peer over the network and resolves with its reply", async () => {
+  const net = await makeNetwork(["a", "b"]);
+  const forumA = net.forum("a");
+  const forumB = net.forum("b");
+
+  net.bully("b").channel.on("get-status", (envelope) => {
+    forumB.respond(envelope, { status: "running-on-b" });
+  });
+
+  const result = await forumA.request<null, { status: string }>("b", "get-status", null);
+  net.stopAll();
+
+  assert.deepStrictEqual(result, { status: "running-on-b" });
+});
+
+test("request rejects when the target never responds within the timeout", async () => {
+  const { bully, forum } = makeNode(
+    { name: "a", host: "10.0.0.1" },
+    [{ name: "b", host: "10.0.0.2" }],
+    fakeFetch(async () => ({ ok: true })),
+  );
+
+  await bully.startElection();
+  // No handler registered for "get-status" — nothing ever calls respond().
+
+  await assert.rejects(() => forum.request("a", "get-status", null, 30), /timed out/);
+  bully.stop();
+});
+
+const hasResponseListener = (bully: Bully) =>
+  bully.channel.eventNames().some((n) => String(n).startsWith("__response:"));
+
+test("request cleans up its response listener after timing out", async () => {
+  const { bully, forum } = makeNode(
+    { name: "a", host: "10.0.0.1" },
+    [{ name: "b", host: "10.0.0.2" }],
+    fakeFetch(async () => ({ ok: true })),
+  );
+
+  await bully.startElection();
+  // No handler registered for "get-status" — nothing ever calls respond(), so this times out.
+  await forum.request("b", "get-status", null, 20).catch(() => {});
+  bully.stop();
+
+  assert.strictEqual(hasResponseListener(bully), false);
+});
+
+test("request cleans up its response listener after resolving", async () => {
+  const { bully, forum } = makeNode(
+    { name: "a", host: "10.0.0.1" },
+    [{ name: "b", host: "10.0.0.2" }],
+    fakeFetch(async () => ({ ok: true })),
+  );
+
+  await bully.startElection();
+  bully.channel.on("get-status", (envelope) => forum.respond(envelope, "ok"));
+
+  await forum.request("a", "get-status", null);
+  bully.stop();
+
+  assert.strictEqual(hasResponseListener(bully), false);
+});
+
+test("concurrent requests to the same peer and event never cross-resolve", async () => {
+  const { bully, forum } = makeNode(
+    { name: "a", host: "10.0.0.1" },
+    [{ name: "b", host: "10.0.0.2" }],
+    fakeFetch(async () => ({ ok: true })),
+  );
+
+  await bully.startElection();
+
+  bully.channel.on("echo", (envelope) => {
+    // Reply out of order to prove the correlation id, not arrival order, decides resolution.
+    setTimeout(() => forum.respond(envelope, envelope.payload), envelope.payload === "first" ? 20 : 5);
+  });
+
+  const [first, second] = await Promise.all([
+    forum.request("a", "echo", "first"),
+    forum.request("a", "echo", "second"),
+  ]);
+  bully.stop();
+
+  assert.strictEqual(first, "first");
+  assert.strictEqual(second, "second");
 });
 
 test("distribute splits work across the whole cluster in a stable order, self included", async () => {

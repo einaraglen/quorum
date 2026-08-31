@@ -1,6 +1,6 @@
 import { Transport } from "./transport.js";
 import { Bully, type Discovery } from "./bully.js";
-import { Forum } from "./forum.js";
+import { Forum, type RequestEnvelope } from "./forum.js";
 import { Sharding } from "./sharding.js";
 import type { Logger } from "./logger.js";
 
@@ -92,6 +92,24 @@ export class Quorum<TId = string> implements Disposable {
     return this.shard.updateIds(ids);
   }
 
+  /** Peer-to-peer, fire-and-forget: message one specific named peer directly (self included). */
+  public async messagePeer(peerName: string, event: string, payload?: unknown): Promise<void> {
+    return this.forum.messagePeer(peerName, event, payload);
+  }
+  /** Peer-to-peer request/response: message one peer and wait for its reply. See Forum.request. */
+  public async request<T, R>(peerName: string, event: string, payload: T, responseTimeoutMs?: number): Promise<R> {
+    return this.forum.request(peerName, event, payload, responseTimeoutMs);
+  }
+  /** Reply to a request(), addressed back to the requester via the envelope it sent. */
+  public async respond<R>(envelope: Pick<RequestEnvelope<unknown>, "requestId" | "from">, response: R): Promise<void> {
+    return this.forum.respond(envelope, response);
+  }
+  /** Register a handler for a custom event arriving via messagePeer/request/tell/broadcast/send. Returns an unsubscribe function. */
+  public onMessage(event: string, handler: (payload: any) => void): () => void {
+    this.bully.channel.on(event, handler);
+    return () => this.bully.channel.off(event, handler);
+  }
+
   /** Fires with the ids just gained whenever this pod's held ids grow. Returns an unsubscribe function. */
   public onAssigned(onEvent: (ids: TId[]) => void): () => void {
     this.shard.lifecycle.on("assigned", onEvent);
@@ -101,6 +119,17 @@ export class Quorum<TId = string> implements Disposable {
   public onReleased(onEvent: (ids: TId[]) => void): () => void {
     this.shard.lifecycle.on("released", onEvent);
     return () => this.shard.lifecycle.off("released", onEvent);
+  }
+
+  /** Fires when this pod becomes leader (after peers have been notified). Returns an unsubscribe function. */
+  public onElected(onEvent: () => void): () => void {
+    this.bully.lifecycle.on("elected", onEvent);
+    return () => this.bully.lifecycle.off("elected", onEvent);
+  }
+  /** Fires when this pod steps down as leader. Returns an unsubscribe function. */
+  public onDemoted(onEvent: () => void): () => void {
+    this.bully.lifecycle.on("demoted", onEvent);
+    return () => this.bully.lifecycle.off("demoted", onEvent);
   }
 
   public start(): void {
