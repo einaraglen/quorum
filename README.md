@@ -41,6 +41,8 @@ Four messaging patterns are available, each with a different routing model:
 
 All four deliver to the pod's local `channel` EventEmitter when the target happens to be self, with no network round-trip.
 
+`request(peer, event, payload, responseTimeoutMs?)` layers a reply on top of `messagePeer`: it tags the message with a generated request id and the sender's own name, then waits up to `responseTimeoutMs` (default `2000`) for a matching reply — rejecting if none arrives, unlike the fire-and-forget methods above. The target's handler receives a `{ requestId, from, payload }` envelope (via `onMessage`/`channel`) and answers with `respond(envelope, response)`, which addresses the reply straight back to `envelope.from`. Concurrent requests to the same peer and event never cross-resolve — each is correlated by its own request id, not by event name alone.
+
 `distribute(event, resolvePayload)` is a leader-only helper for partitioning work: it calls your callback once per peer (sorted by name for stability) and delivers the return value to each pod as a `channel` event. Useful for sending each pod its own slice of a large dataset without the leader needing to know each pod's address explicitly. It's fire-and-forget — it doesn't wait for peers to acknowledge or finish, and a peer that's briefly unreachable just silently misses its share.
 
 `distributeAndCollect(event, resolvePayload, responseEvent, responseTimeoutMs?)` is the same idea, but waits up to `responseTimeoutMs` (default `2000`) for peers to answer back on `responseEvent` and resolves with a `Map<peerName, response>`. A peer that never responds is simply absent from the map — this never rejects on a missing or slow peer. Each peer answers by calling `forum.send(responseEvent, { peer: self, response })`, since responses aren't automatically tagged with who sent them.
@@ -62,7 +64,7 @@ Ownership changes drive subscriptions: `subscribe(id, onEvent)` listens to the c
 
 ### Quorum — the wrapper
 
-`Quorum` creates and wires all four layers (Transport, Bully, Forum, Sharding) from a single options object. It is the primary entry point for production use. The individual classes are exported for testing and advanced composition.
+`Quorum` creates and wires all four layers (Transport, Bully, Forum, Sharding) from a single options object. It is the primary entry point for production use. It also exposes the underlying layers' most-used methods directly — peer-to-peer messaging (`messagePeer`, `request`/`respond`, `onMessage`) and leadership lifecycle events (`onElected`, `onDemoted`) — so most applications never need to reach for the individual classes at all. The individual classes are exported for testing and advanced composition.
 
 ---
 
@@ -94,6 +96,18 @@ console.log(q.getOwner("uuid-1")); // "pod-name-c"
 // React the instant this pod gains or loses ids — no polling getHeldIds():
 q.onAssigned((ids) => console.log("now holding:", ids));
 q.onReleased((ids) => console.log("no longer holding:", ids));
+
+// Ask a specific peer something and wait for its answer:
+const status = await q.request("pod-b", "get-status", null);
+
+// ...and on pod-b, answer it:
+q.onMessage("get-status", (envelope) => {
+  q.respond(envelope, { ok: true });
+});
+
+// React to leadership changes:
+q.onElected(() => console.log("I am now the leader"));
+q.onDemoted(() => console.log("lost leadership"));
 
 // Clean shutdown (or use `using q = new Quorum(...)` for automatic teardown):
 q.stop();
@@ -155,6 +169,14 @@ q.updateIds(ids): Promise<void>        // leader-only: replace the full id set a
 
 q.onAssigned(onEvent): () => void      // fires with the ids just gained when held ids grow
 q.onReleased(onEvent): () => void      // fires with the ids just lost when held ids shrink
+
+q.messagePeer(peer, event, payload?): Promise<void>       // peer-to-peer, fire-and-forget (self included)
+q.request(peer, event, payload, timeoutMs?): Promise<R>   // peer-to-peer, waits for a respond() reply; rejects on timeout
+q.respond(envelope, response): Promise<void>               // reply to a request(), from inside its onMessage handler
+q.onMessage(event, handler): () => void                    // handle a custom event from messagePeer/request/tell/broadcast/send
+
+q.onElected(onEvent): () => void       // fires when this pod becomes leader
+q.onDemoted(onEvent): () => void       // fires when this pod steps down as leader
 ```
 
 ---
@@ -185,7 +207,7 @@ await bully.startElection();
 
 ### Channel events
 
-`bully.channel` is a plain Node.js `EventEmitter`. Every message received from a peer arrives here as a named event. You can listen directly for any custom event the leader broadcasts, or emit events directly in tests to simulate incoming messages without a real network:
+`bully.channel` is a plain Node.js `EventEmitter`. Every message received from a peer arrives here as a named event — `Quorum.onMessage` wraps this for normal use. You can also listen directly for any custom event the leader broadcasts, or emit events directly in tests to simulate incoming messages without a real network:
 
 ```typescript
 // Simulate the leader telling this pod to take ownership:
@@ -200,7 +222,7 @@ bully.channel.emit("ownership-map", [
 
 ### Lifecycle events
 
-`bully.lifecycle` emits `"elected"` when this pod becomes leader (after peers have been notified), and `"demoted"` when it steps down. Sharding uses these internally; you can also listen directly:
+`bully.lifecycle` emits `"elected"` when this pod becomes leader (after peers have been notified), and `"demoted"` when it steps down. Sharding uses these internally; `Quorum.onElected`/`onDemoted` wrap them for normal use, or you can listen on `bully.lifecycle` directly if you're composing the layers yourself:
 
 ```typescript
 bully.lifecycle.on("elected", () => {
