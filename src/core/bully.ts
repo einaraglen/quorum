@@ -119,6 +119,24 @@ export class Bully implements Disposable {
   }
 
   public onCoordinatorMessage(id: string): void {
+    // Bully's invariant: the highest-named reachable node is leader. If we currently, correctly
+    // believe *we ourselves* are leader, an announcement naming a lower node must be stale or
+    // erroneous — e.g. that node transiently failed to reach us during a concurrent election
+    // (most likely when many nodes start at once) and wrongly self-elected. Accepting it
+    // unconditionally, as before, let two nodes settle into a stable, mutual disagreement about
+    // who's leader: each still considered its own (different) belief reachable, so neither's
+    // heartbeat ever noticed anything was wrong, and nothing here ever re-reconciled them.
+    //
+    // This deliberately does NOT compare against a stale leaderId belonging to some other,
+    // possibly-departed node (an earlier version of this check did, and broke the legitimate
+    // "the old leader died, a lower-named survivor is taking over" case — that survivor's own
+    // leaderId still pointed at the dead leader, so it wrongly rejected the takeover). Only our
+    // own, current self-belief is trustworthy enough to reject an announcement against.
+    if (this.isLeader() && id < this.selfId!) {
+      this.logger.debug(`Ignoring coordinator announcement from lower-named "${id}" — I am leader`);
+      return;
+    }
+
     if (this.coordinatorWaitTimeout) clearTimeout(this.coordinatorWaitTimeout);
 
     const wasLeader = this.isLeader();
