@@ -155,6 +155,34 @@ test("demotes a leader and emits demoted when a new leader is announced", async 
   assert.strictEqual(bully.getStatus().leader, "z");
 });
 
+test("onCoordinatorMessage ignores a lower-named announcement while self is leader (split-brain guard)", async () => {
+  // Simulates the production scenario: two pods start near-simultaneously and each transiently
+  // can't reach the other during its own election, so both self-elect. "z" is the legitimate
+  // leader (highest name); "a" wrongly also believes it's leader and broadcasts a coordinator
+  // message naming itself. "z" must not accept it — that lower announcement is stale/erroneous by
+  // Bully's own invariant, and accepting it would let both pods settle into permanent mutual
+  // disagreement about who's leader.
+  const bully = makeBully(
+    { name: "z", host: "10.0.0.2" },
+    [{ name: "a", host: "10.0.0.1" }],
+    fakeFetch(async () => ({ ok: true })),
+  );
+
+  await bully.startElection();
+  assert.strictEqual(bully.getStatus().isLeader, true);
+
+  let demoted = false;
+  bully.lifecycle.on("demoted", () => {
+    demoted = true;
+  });
+
+  bully.onCoordinatorMessage("a");
+
+  assert.strictEqual(demoted, false);
+  assert.strictEqual(bully.getStatus().isLeader, true);
+  assert.strictEqual(bully.getStatus().leader, "z");
+});
+
 test("getPodRoles tags every pod as leader or follower", async () => {
   const bully = makeBully(
     { name: "b", host: "10.0.0.2" },
